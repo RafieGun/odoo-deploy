@@ -3,14 +3,14 @@ set -e
 
 echo "🧱 [00] Base system setup"
 
-# ===== TIMEZONE =====
+# Timezone
 timedatectl set-timezone Asia/Jakarta
 
-# ===== UPDATE OS =====
+# Update OS
 apt update -y
 apt upgrade -y
 
-# ===== BASIC PACKAGES =====
+# Basic packages
 apt install -y \
   curl \
   wget \
@@ -22,7 +22,7 @@ apt install -y \
   unzip \
   ufw
 
-# ===== FIREWALL =====
+# Firewall
 ufw allow OpenSSH
 ufw allow 80
 ufw allow 443
