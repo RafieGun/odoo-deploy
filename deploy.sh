@@ -1,28 +1,20 @@
-#!/bin/bash
-set -e
-
-# ===== SAFETY CHECK =====
-if [[ $EUID -ne 0 ]]; then
-  echo "❌ Run this script as root"
-  exit 1
-fi
-
-# ===== LOAD ENV =====
-if [ ! -f ".env" ]; then
-  echo "❌ .env file not found"
-  echo "👉 copy .env.example to .env"
-  exit 1
-fi
+#!/usr/bin/env bash
+set -euo pipefail
 
 source .env
 
-echo "🚀 Starting Odoo deployment for $DOMAIN"
-echo "----------------------------------------"
-
-# ===== RUN ALL SCRIPTS =====
-for script in scripts/*.sh; do
-  echo "▶ Running $script"
-  bash "$script"
-done
-
-echo "✅ Deployment finished for $DOMAIN"
+case "$ROLE" in
+  db)
+    bash scripts/base.sh
+    bash scripts/postgres.sh
+    ;;
+  odoo)
+    bash scripts/base.sh
+    bash scripts/odoo.sh
+    bash scripts/nginx.sh
+    ;;
+  *)
+    echo "❌ ROLE must be 'db' or 'odoo'"
+    exit 1
+    ;;
+esac
