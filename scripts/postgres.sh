@@ -1,70 +1,89 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
+set -e
 
-log() { echo "[POSTGRES] $*"; }
-die() { echo "[POSTGRES][ERROR] $*" >&2; exit 1; }
+echo "=== POSTGRESQL DB SERVER FOR ODOO ==="
 
-require_root() {
-  [[ "$EUID" -eq 0 ]] || die "Run as root"
-}
+# =========================
+# VARIABLE
+# =========================
+PG_VERSION="16"          # auto di Ubuntu 24.04
+ODOO_DB_USER="odoo18"
+ODOO_DB_PASS="admin"
+ODOO_VM_IP="192.168.1.50"   # <-- GANTI IP VM ODOO
+PG_PORT="5432"
 
-require_env() {
-  : "${PG_VERSION:?PG_VERSION not set}"
-  : "${PG_DB:?PG_DB not set}"
-  : "${PG_USER:?PG_USER not set}"
-  : "${PG_PASSWORD:?PG_PASSWORD not set}"
-  : "${PG_LISTEN_ADDRESS:?PG_LISTEN_ADDRESS not set}"
-  : "${PG_ALLOWED_NET:?PG_ALLOWED_NET not set}"
-}
+# =========================
+# ROOT CHECK
+# =========================
+if [ "$EUID" -ne 0 ]; then
+  echo "Run as root!"
+  exit 1
+fi
 
-install_postgres() {
-  log "Installing PostgreSQL ${PG_VERSION}"
-  apt-get install -y postgresql postgresql-contrib
-}
+# =========================
+# SYSTEM UPDATE
+# =========================
+apt update && apt upgrade -y
 
-configure_postgres() {
-  local conf="/etc/postgresql/${PG_VERSION}/main/postgresql.conf"
-  local hba="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
+# =========================
+# INSTALL POSTGRESQL
+# =========================
+apt install -y postgresql postgresql-contrib postgresql-client ufw
 
-  log "Configuring postgresql.conf"
-  sed -i "s/^#listen_addresses.*/listen_addresses = '${PG_LISTEN_ADDRESS}'/" "$conf"
+# =========================
+# POSTGRES CONFIG (LISTEN ALL)
+# =========================
+PG_CONF="/etc/postgresql/${PG_VERSION}/main/postgresql.conf"
+PG_HBA="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
 
-  log "Configuring pg_hba.conf"
-  grep -q "${PG_ALLOWED_NET}" "$hba" || echo \
-"host    all     all     ${PG_ALLOWED_NET}    md5" >> "$hba"
+sed -i "s/^#listen_addresses.*/listen_addresses = '*'/" $PG_CONF
+sed -i "s/^#port.*/port = ${PG_PORT}/" $PG_CONF
 
-  systemctl restart postgresql
-}
+# =========================
+# PG_HBA ACCESS RULE
+# =========================
+if ! grep -q "$ODOO_VM_IP" $PG_HBA; then
+  echo "host    all     all     ${ODOO_VM_IP}/32    md5" >> $PG_HBA
+fi
 
-create_user_and_db() {
-  log "Creating role & database"
+# =========================
+# RESTART POSTGRES
+# =========================
+systemctl restart postgresql
 
-  su - postgres -c "psql <<EOF
+# =========================
+# CREATE ODOO DB USER
+# =========================
+sudo -u postgres psql <<EOF
 DO \$\$
 BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${PG_USER}') THEN
-    CREATE ROLE ${PG_USER} LOGIN PASSWORD '${PG_PASSWORD}' CREATEDB;
-  END IF;
+   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ODOO_DB_USER}') THEN
+      CREATE ROLE ${ODOO_DB_USER} WITH LOGIN PASSWORD '${ODOO_DB_PASS}';
+      ALTER ROLE ${ODOO_DB_USER} CREATEDB;
+   END IF;
 END
 \$\$;
+EOF
 
-CREATE DATABASE ${PG_DB} OWNER ${PG_USER};
-EOF" || true
-}
+# =========================
+# FIREWALL (STRICT)
+# =========================
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow from ${ODOO_VM_IP} to any port ${PG_PORT}
+ufw allow ssh
+ufw allow https
+ufw allow http
+ufw --force enable
 
-open_firewall() {
-  log "Opening firewall 5432"
-  ufw allow 5432/tcp || true
-}
+# =========================
+# FINAL CHECK
+# =========================
+echo "=== FINAL CHECK ==="
+ss -lntp | grep ${PG_PORT} || true
+ufw status verbose
 
-main() {
-  require_root
-  require_env
-  install_postgres
-  configure_postgres
-  create_user_and_db
-  open_firewall
-  log "PostgreSQL ready 🎉"
-}
-
-main "$@"
+echo "=== DB SERVER READY ==="
+echo "Allowed Odoo VM IP : ${ODOO_VM_IP}"
+echo "PostgreSQL Port    : ${PG_PORT}"
