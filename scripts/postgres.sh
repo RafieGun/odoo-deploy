@@ -8,7 +8,7 @@ echo "=== POSTGRESQL DB SERVER FOR ODOO ==="
 # =========================
 PG_VERSION="16"          # auto di Ubuntu 24.04
 ODOO_DB_USER="odoo18"
-ODOO_DB_PASS="admin"
+ODOO_DB_PASS="apaya"
 ODOO_VM_IP="192.168.1.50"   # <-- GANTI IP VM ODOO
 PG_PORT="5432"
 

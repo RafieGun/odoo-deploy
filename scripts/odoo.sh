@@ -10,7 +10,7 @@ ODOO_USER="odoo18"
 ODOO_HOME="/opt/odoo18"
 ODOO_VERSION="18.0"
 DB_PASSWORD="admin"
-ADMIN_PASSWORD="Indramil@123"
+ADMIN_PASSWORD="apaya"
 
 # =========================
 # ROOT CHECK
