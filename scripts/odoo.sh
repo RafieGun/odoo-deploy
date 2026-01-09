@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== ODOO 18 INSTALL SCRIPT + BACKUP + CLOUDFLARE ==="
+echo "=== ODOO 18 PRODUCTION INSTALL ==="
 
 # =========================
 # VARIABLE (WAJIB GANTI)
@@ -23,7 +23,7 @@ BACKUP_DIR="/backup/odoo"
 # =========================
 # SYSTEM UPDATE
 # =========================
-apt update && apt upgrade -y
+apt update -y
 
 # =========================
 # DEPENDENCIES
@@ -34,20 +34,28 @@ apt install -y \
  postgresql-client ufw curl tar
 
 # =========================
-# ODOO USER
+# USER ODOO
 # =========================
 id $ODOO_USER &>/dev/null || useradd -m -d $ODOO_HOME -U -r -s /bin/bash $ODOO_USER
 
 # =========================
 # CLONE ODOO
 # =========================
-mkdir -p $ODOO_HOME && cd $ODOO_HOME
-[ ! -d odoo ] && git clone https://github.com/odoo/odoo.git --depth 1 --branch $ODOO_VERSION odoo
+mkdir -p $ODOO_HOME
+cd $ODOO_HOME
+
+if [ ! -d "odoo" ]; then
+  git clone https://github.com/odoo/odoo.git \
+    --depth 1 --branch $ODOO_VERSION odoo
+fi
 
 # =========================
 # PYTHON VENV
 # =========================
-python3 -m venv $ODOO_HOME/venv
+if [ ! -d "$ODOO_HOME/venv" ]; then
+  python3 -m venv $ODOO_HOME/venv
+fi
+
 chown -R $ODOO_USER:$ODOO_USER $ODOO_HOME
 
 su - $ODOO_USER <<EOF
@@ -57,7 +65,7 @@ pip install -r $ODOO_HOME/odoo/requirements.txt
 EOF
 
 # =========================
-# CONFIG
+# ODOO CONFIG
 # =========================
 cat > $ODOO_HOME/odoo.conf <<EOF
 [options]
@@ -73,15 +81,39 @@ EOF
 chown $ODOO_USER:$ODOO_USER $ODOO_HOME/odoo.conf
 
 # =========================
+# SYSTEMD ODOO (AUTO START)
+# =========================
+cat > /etc/systemd/system/odoo18.service <<EOF
+[Unit]
+Description=Odoo 18
+After=network.target
+
+[Service]
+User=${ODOO_USER}
+ExecStart=${ODOO_HOME}/venv/bin/python3 ${ODOO_HOME}/odoo/odoo-bin -c ${ODOO_HOME}/odoo.conf
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable odoo18
+systemctl restart odoo18
+
+# =========================
 # BACKUP SCRIPT
 # =========================
 mkdir -p $BACKUP_DIR
 
 cat > /usr/local/bin/backup_odoo.sh <<'EOF'
 #!/bin/bash
+
 DATE=$(date +%F)
-ODOO_HOME="/opt/odoo18"
 BACKUP_DIR="/backup/odoo"
+
+systemctl is-active --quiet odoo18 || exit 1
 
 tar -czf $BACKUP_DIR/filestore_$DATE.tar.gz /opt/odoo18/.local/share/Odoo
 tar -czf $BACKUP_DIR/config_$DATE.tar.gz /opt/odoo18/odoo.conf
@@ -92,18 +124,18 @@ EOF
 chmod +x /usr/local/bin/backup_odoo.sh
 
 # =========================
-# CRON
+# CRON (ANTI DUPLIKAT)
 # =========================
+crontab -l 2>/dev/null | grep -v backup_odoo.sh | crontab -
 (crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/backup_odoo.sh") | crontab -
 
 # =========================
 # CLOUDFLARE TUNNEL
 # =========================
-curl -fsSL https://pkg.cloudflare.com/install.sh | bash
-apt install -y cloudflared
-
-echo "Login Cloudflare:"
-echo "cloudflared tunnel login"
+if ! command -v cloudflared &>/dev/null; then
+  curl -fsSL https://pkg.cloudflare.com/install.sh | bash
+  apt install -y cloudflared
+fi
 
 # =========================
 # FIREWALL
@@ -113,4 +145,4 @@ ufw allow 80
 ufw allow 443
 ufw --force enable
 
-echo "=== ODOO READY ==="
+echo "=== ODOO PRODUCTION READY ==="
