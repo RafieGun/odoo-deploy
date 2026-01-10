@@ -1,15 +1,18 @@
 #!/bin/bash
 set -e
 
-echo "=== POSTGRESQL PRODUCTION SERVER ==="
+echo "=== POSTGRESQL PRODUCTION SERVER (LOCKED) ==="
 
 # =========================
 # VARIABLE (WAJIB GANTI)
 # =========================
 PG_VERSION="16"
+
+DB_IP="100.100.64.57"          # IP VM DATABASE (TAILSCALE / NIC)
+ODOO_TAILSCALE_IP="100.74.142.51"
+
 ODOO_DB_USER="odoo18"
 ODOO_DB_PASS="GANTI_PASSWORD_DB"
-ODOO_TAILSCALE_IP="100.x.x.x"
 
 PG_PORT="5432"
 BACKUP_DIR="/backup/postgres"
@@ -26,23 +29,31 @@ apt update -y
 apt install -y postgresql postgresql-client ufw gzip
 
 # =========================
-# ENABLE POSTGRES (AUTO BOOT)
+# ENABLE POSTGRES
 # =========================
 systemctl enable postgresql
-systemctl enable postgresql@${PG_VERSION}-main
 systemctl start postgresql
 
 # =========================
-# CONFIG
+# CONFIG FILE
 # =========================
 PG_CONF="/etc/postgresql/${PG_VERSION}/main/postgresql.conf"
 PG_HBA="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
 
-sed -i "s/#listen_addresses =.*/listen_addresses='*'/" $PG_CONF
-sed -i "s/#port =.*/port = ${PG_PORT}/" $PG_CONF
+# =========================
+# LOCK LISTEN ADDRESS (ONLY DB IP)
+# =========================
+sed -i "s/^#\\?listen_addresses.*/listen_addresses = '${DB_IP}'/" $PG_CONF
+sed -i "s/^#\\?port.*/port = ${PG_PORT}/" $PG_CONF
 
-grep -q "$ODOO_TAILSCALE_IP" $PG_HBA || \
-echo "host all all ${ODOO_TAILSCALE_IP}/32 md5" >> $PG_HBA
+# =========================
+# pg_hba.conf (AUTO INSERT TOP)
+# =========================
+# allow local (pgAdmin / local psql)
+sed -i "1ilocal   all     all                     md5" $PG_HBA
+
+# allow Odoo VM via tailscale
+sed -i "2ihost    all     all     ${ODOO_TAILSCALE_IP}/32    md5" $PG_HBA
 
 systemctl restart postgresql
 
@@ -55,43 +66,31 @@ BEGIN
   IF NOT EXISTS (
     SELECT FROM pg_roles WHERE rolname = '${ODOO_DB_USER}'
   ) THEN
-    CREATE ROLE ${ODOO_DB_USER} LOGIN PASSWORD '${ODOO_DB_PASS}' CREATEDB;
+    CREATE ROLE ${ODOO_DB_USER}
+    LOGIN PASSWORD '${ODOO_DB_PASS}'
+    CREATEDB;
   END IF;
 END
 \$\$;
 EOF
 
 # =========================
-# SYSTEMD HARDENING
-# =========================
-mkdir -p /etc/systemd/system/postgresql.service.d
-
-cat > /etc/systemd/system/postgresql.service.d/restart.conf <<EOF
-[Service]
-Restart=always
-RestartSec=5
-EOF
-
-systemctl daemon-reexec
-systemctl daemon-reload
-systemctl restart postgresql
-
-# =========================
-# BACKUP SCRIPT
+# BACKUP SCRIPT (VM DB)
 # =========================
 mkdir -p $BACKUP_DIR
 
-cat > /usr/local/bin/backup_postgres.sh <<EOF
+cat > /usr/local/bin/backup_postgres.sh <<'EOF'
 #!/bin/bash
+set -e
 
-DATE=\$(date +%F)
+DATE=$(date +%F)
 BACKUP_DIR="/backup/postgres"
 
 pg_isready -q || exit 1
 
-sudo -u postgres pg_dumpall | gzip > \$BACKUP_DIR/all_db_\$DATE.sql.gz
+sudo -u postgres pg_dumpall | gzip > $BACKUP_DIR/all_db_$DATE.sql.gz
 
-find \$BACKUP_DIR -type f -mtime +14 -delete
+find $BACKUP_DIR -type f -mtime +14 -delete
 EOF
 
 chmod +x /usr/local/bin/backup_postgres.sh
@@ -103,7 +102,7 @@ crontab -l 2>/dev/null | grep -v backup_postgres.sh | crontab -
 (crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/backup_postgres.sh") | crontab -
 
 # =========================
-# FIREWALL (ZERO TRUST)
+# FIREWALL (STRICT)
 # =========================
 ufw --force reset
 ufw default deny incoming
@@ -112,4 +111,4 @@ ufw allow from ${ODOO_TAILSCALE_IP} to any port ${PG_PORT}
 ufw allow ssh
 ufw --force enable
 
-echo "=== POSTGRES PRODUCTION READY ==="
+echo "=== POSTGRES PRODUCTION READY (LOCKED) ==="

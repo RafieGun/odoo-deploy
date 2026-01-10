@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-echo "=== ODOO 18 INSTALL SCRIPT (FINAL + BACKUP) ==="
+echo "=== ODOO 18 INSTALL SCRIPT (FINAL + WKHTMLTOPDF + BACKUP) ==="
 
 # =========================
-# VARIABLE (GANTI SENDIRI)
+# VARIABLE (GANTI SESUAI LU)
 # =========================
 ODOO_USER="odoo18"
 ODOO_HOME="/opt/odoo18"
@@ -42,7 +42,43 @@ apt install -y \
   libsasl2-dev \
   postgresql-client \
   tar \
-  ufw
+  ufw \
+  wget
+
+# =========================
+# WKHTMLTOPDF 0.12.5 (QT PATCHED)
+# =========================
+echo "=== INSTALL WKHTMLTOPDF 0.12.5 (QT PATCHED) ==="
+
+if command -v wkhtmltopdf >/dev/null 2>&1; then
+  echo "wkhtmltopdf already installed:"
+  wkhtmltopdf --version
+else
+  echo "Installing wkhtmltopdf 0.12.5 (QT patched)"
+
+  apt install -y \
+    fontconfig \
+    libfreetype6 \
+    libjpeg-turbo8 \
+    libpng16-16 \
+    libxrender1 \
+    libxext6 \
+    xfonts-base \
+    xfonts-75dpi
+
+  # libssl1.1 (legacy, wajib utk wkhtmltopdf)
+  if ! dpkg -l | grep -q libssl1.1; then
+    cd /tmp
+    wget http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.0g-2ubuntu4_amd64.deb
+    dpkg -i libssl1.1_1.1.0g-2ubuntu4_amd64.deb
+  fi
+
+  cd /tmp
+  wget https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.bionic_amd64.deb
+  dpkg -i wkhtmltox_0.12.5-1.bionic_amd64.deb
+fi
+
+wkhtmltopdf --version
 
 # =========================
 # ODOO SYSTEM USER
@@ -83,9 +119,9 @@ pip install -r "$ODOO_HOME/odoo/requirements.txt"
 EOF
 
 # =========================
-# ODOO CONFIG (PAKAI PATH LU)
+# ODOO CONFIG
 # =========================
-mkdir -p "$ODOO_HOME/odoo/custom"
+mkdir -p "$ODOO_HOME/odoo/muk"
 mkdir -p "$ODOO_HOME/odoo/debian"
 
 cat > "$ODOO_HOME/odoo/debian/odoo.conf" <<EOF
@@ -97,8 +133,14 @@ db_port = 5432
 db_user = ${ODOO_USER}
 db_password = ${DB_PASSWORD}
 
-addons_path = ${ODOO_HOME}/odoo/addons,${ODOO_HOME}/odoo/custom
+proxy_mode = True
+dbfilter = ^%d\$
+list_db = False
+
+addons_path = ${ODOO_HOME}/odoo/addons, ${ODOO_HOME}/odoo/muk
 logfile = ${ODOO_HOME}/odoo.log
+
+wkhtmltopdf = /usr/local/bin
 EOF
 
 chown "$ODOO_USER:$ODOO_USER" "$ODOO_HOME/odoo/debian/odoo.conf"
@@ -128,7 +170,7 @@ systemctl enable odoo18
 systemctl restart odoo18
 
 # =========================
-# BACKUP SCRIPT (INI YANG TADI KELEWAT)
+# BACKUP SCRIPT
 # =========================
 mkdir -p "$BACKUP_DIR"
 
@@ -139,7 +181,7 @@ DATE=$(date +%F)
 BACKUP_DIR="/backup/odoo"
 ODOO_HOME="/opt/odoo18"
 
-# backup filestore (attachment)
+# backup filestore
 tar -czf $BACKUP_DIR/filestore_$DATE.tar.gz \
   $ODOO_HOME/.local/share/Odoo
 
@@ -159,4 +201,4 @@ chmod +x /usr/local/bin/backup_odoo.sh
 crontab -l 2>/dev/null | grep -v backup_odoo.sh | crontab -
 (crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/backup_odoo.sh") | crontab -
 
-echo "=== INSTALL DONE (BACKUP ENABLED) ==="
+echo "=== INSTALL DONE (ODOO + WKHTMLTOPDF + BACKUP ENABLED) ==="
